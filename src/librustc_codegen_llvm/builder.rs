@@ -1420,4 +1420,10 @@ impl BuilderMethods<'a, 'tcx> for Builder<'a, 'll, 'tcx> {
     fn do_not_inline(&mut self, llret: &'ll Value) {
         llvm::Attribute::NoInline.apply_callsite(llvm::AttributePlace::Function, llret);
     }
+
+    fn add_string_metadata(&mut self, llret: &'ll Value, metadata: &CStr) {
+        unsafe {
+            llvm::LLVMRustAddStringMetadata(llret, metadata.as_ptr())
+        }
+    }
 }

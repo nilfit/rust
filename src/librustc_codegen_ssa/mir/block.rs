@@ -159,6 +159,8 @@ impl<'a, 'tcx: 'a, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
                     // exponential inlining - see issue #41696.
                     bx.do_not_inline(llret);
                 }
+                // TODO(japaric) remove
+                // bx.add_string_metadata(llret, const_cstr!("hello"));
 
                 if let Some((ret_dest, target)) = destination {
                     this.store_return(bx, ret_dest, &fn_ty.ret, llret);

@@ -320,4 +320,5 @@ pub trait BuilderMethods<'a, 'tcx: 'a>:
 
     unsafe fn delete_basic_block(&mut self, bb: Self::BasicBlock);
     fn do_not_inline(&mut self, llret: Self::Value);
+    fn add_string_metadata(&mut self, llret: Self::Value, metadata: &CStr);
 }

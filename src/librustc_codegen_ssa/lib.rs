@@ -38,6 +38,7 @@ extern crate rustc_mir;
 extern crate syntax_pos;
 extern crate rustc_incremental;
 extern crate rustc_codegen_utils;
+#[macro_use]
 extern crate rustc_data_structures;
 extern crate rustc_allocator;
 extern crate rustc_fs_util;
