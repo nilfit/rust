@@ -8,6 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use std::ffi::CString;
 use rustc::middle::lang_items;
 use rustc::ty::{self, Ty, TypeFoldable};
 use rustc::ty::layout::{self, LayoutOf, HasTyCtxt};
@@ -129,7 +130,8 @@ impl<'a, 'tcx: 'a, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
             fn_ptr: Bx::Value,
             llargs: &[Bx::Value],
             destination: Option<(ReturnDest<'tcx, Bx::Value>, mir::BasicBlock)>,
-            cleanup: Option<mir::BasicBlock>
+            cleanup: Option<mir::BasicBlock>,
+            name: Option<String>
         | {
             if let Some(cleanup) = cleanup {
                 let ret_bx = if let Some((_, target)) = destination {
@@ -159,8 +161,10 @@ impl<'a, 'tcx: 'a, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
                     // exponential inlining - see issue #41696.
                     bx.do_not_inline(llret);
                 }
-                // TODO(japaric) remove
-                // bx.add_string_metadata(llret, const_cstr!("hello"));
+                if let Some(name) = name {
+                    let cname = CString::new(name).unwrap();
+                    bx.add_string_metadata(llret, &cname);
+                }
 
                 if let Some((ret_dest, target)) = destination {
                     this.store_return(bx, ret_dest, &fn_ty.ret, llret);
@@ -339,7 +343,7 @@ impl<'a, 'tcx: 'a, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
                 };
                 do_call(self, &mut bx, fn_ty, drop_fn, args,
                         Some((ReturnDest::Nothing, target)),
-                        unwind);
+                        unwind, None);
             }
 
             mir::TerminatorKind::Assert { ref cond, expected, ref msg, target, cleanup } => {
@@ -432,7 +436,7 @@ impl<'a, 'tcx: 'a, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
                 let llfn = bx.cx().get_fn(instance);
 
                 // Codegen the actual panic invoke/call.
-                do_call(self, &mut bx, fn_ty, llfn, &args, None, cleanup);
+                do_call(self, &mut bx, fn_ty, llfn, &args, None, cleanup, None);
             }
 
             mir::TerminatorKind::DropAndReplace { .. } => {
@@ -447,6 +451,7 @@ impl<'a, 'tcx: 'a, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
                 from_hir_call: _
             } => {
                 debug!("TerminatorKind::Call - {:?}", terminator.kind);
+                let funcname = format!("{:?}", func);
                 // Create the callee. This is a fn ptr or zero-sized and hence a kind of scalar.
                 let callee = self.codegen_operand(&mut bx, func);
 
@@ -562,6 +567,7 @@ impl<'a, 'tcx: 'a, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
                         &[msg_file_line_col],
                         destination.as_ref().map(|(_, bb)| (ReturnDest::Nothing, *bb)),
                         cleanup,
+                        None,
                     );
                     return;
                 }
@@ -748,7 +754,7 @@ impl<'a, 'tcx: 'a, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
 
                 do_call(self, &mut bx, fn_ty, fn_ptr, &llargs,
                         destination.as_ref().map(|&(_, target)| (ret_dest, target)),
-                        cleanup);
+                        cleanup, Some(funcname));
             }
             mir::TerminatorKind::GeneratorDrop |
             mir::TerminatorKind::Yield { .. } => bug!("generator ops in codegen"),
