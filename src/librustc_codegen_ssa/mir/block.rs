@@ -446,6 +446,7 @@ impl<'a, 'tcx: 'a, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
                 cleanup,
                 from_hir_call: _
             } => {
+                debug!("TerminatorKind::Call - {:?}", terminator.kind);
                 // Create the callee. This is a fn ptr or zero-sized and hence a kind of scalar.
                 let callee = self.codegen_operand(&mut bx, func);
 
