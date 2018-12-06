@@ -8,6 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use std::ffi::CString;
 use libc::c_uint;
 use rustc::ty::{self, Ty, TypeFoldable, UpvarSubsts};
 use rustc::ty::layout::{LayoutOf, TyLayout, HasTyCtxt};
@@ -215,6 +216,10 @@ pub fn codegen_mir<'a, 'tcx: 'a, Bx: BuilderMethods<'a, 'tcx>>(
     let debug_context =
         cx.create_function_debug_context(instance, sig, llfn, mir);
     let mut bx = Bx::new_block(cx, llfn, "start");
+
+    let sig = format!("sig:{}", sig);
+    let csig = CString::new(sig).unwrap();
+    Bx::add_string_metadata_function(llfn, &csig);
 
     if mir.basic_blocks().iter().any(|bb| bb.is_cleanup) {
         bx.set_personality_fn(cx.eh_personality());

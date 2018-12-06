@@ -131,7 +131,8 @@ impl<'a, 'tcx: 'a, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
             llargs: &[Bx::Value],
             destination: Option<(ReturnDest<'tcx, Bx::Value>, mir::BasicBlock)>,
             cleanup: Option<mir::BasicBlock>,
-            name: Option<String>
+            meta_name: Option<String>,
+            meta_sig: Option<String>,
         | {
             if let Some(cleanup) = cleanup {
                 let ret_bx = if let Some((_, target)) = destination {
@@ -161,9 +162,14 @@ impl<'a, 'tcx: 'a, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
                     // exponential inlining - see issue #41696.
                     bx.do_not_inline(llret);
                 }
-                if let Some(name) = name {
-                    let cname = CString::new(name).unwrap();
-                    bx.add_string_metadata(llret, &cname);
+                if let Some(meta_name) = meta_name {
+                    let cname = CString::new(meta_name).unwrap();
+                    Bx::add_string_metadata(llret, &cname);
+                }
+                if let Some(s) = meta_sig {
+                    // TODO Don't overwrite the "meta_name" metadata
+                    let cs = CString::new(s).unwrap();
+                    Bx::add_string_metadata(llret, &cs);
                 }
 
                 if let Some((ret_dest, target)) = destination {
@@ -343,7 +349,7 @@ impl<'a, 'tcx: 'a, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
                 };
                 do_call(self, &mut bx, fn_ty, drop_fn, args,
                         Some((ReturnDest::Nothing, target)),
-                        unwind, None);
+                        unwind, None, None);
             }
 
             mir::TerminatorKind::Assert { ref cond, expected, ref msg, target, cleanup } => {
@@ -436,7 +442,7 @@ impl<'a, 'tcx: 'a, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
                 let llfn = bx.cx().get_fn(instance);
 
                 // Codegen the actual panic invoke/call.
-                do_call(self, &mut bx, fn_ty, llfn, &args, None, cleanup, None);
+                do_call(self, &mut bx, fn_ty, llfn, &args, None, cleanup, None, None);
             }
 
             mir::TerminatorKind::DropAndReplace { .. } => {
@@ -451,7 +457,7 @@ impl<'a, 'tcx: 'a, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
                 from_hir_call: _
             } => {
                 debug!("TerminatorKind::Call - {:?}", terminator.kind);
-                let funcname = format!("{:?}", func);
+                let meta_funcname = format!("func:{:?}", func);
                 // Create the callee. This is a fn ptr or zero-sized and hence a kind of scalar.
                 let callee = self.codegen_operand(&mut bx, func);
 
@@ -475,6 +481,8 @@ impl<'a, 'tcx: 'a, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
                     &sig,
                 );
                 let abi = sig.abi;
+
+                let meta_sig = format!("sig:{}", sig);
 
                 // Handle intrinsics old codegen wants Expr's for, ourselves.
                 let intrinsic = match def {
@@ -567,6 +575,7 @@ impl<'a, 'tcx: 'a, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
                         &[msg_file_line_col],
                         destination.as_ref().map(|(_, bb)| (ReturnDest::Nothing, *bb)),
                         cleanup,
+                        None,
                         None,
                     );
                     return;
@@ -754,7 +763,7 @@ impl<'a, 'tcx: 'a, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
 
                 do_call(self, &mut bx, fn_ty, fn_ptr, &llargs,
                         destination.as_ref().map(|&(_, target)| (ret_dest, target)),
-                        cleanup, Some(funcname));
+                        cleanup, Some(meta_funcname), Some(meta_sig));
             }
             mir::TerminatorKind::GeneratorDrop |
             mir::TerminatorKind::Yield { .. } => bug!("generator ops in codegen"),

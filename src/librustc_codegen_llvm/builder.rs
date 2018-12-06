@@ -1421,7 +1421,13 @@ impl BuilderMethods<'a, 'tcx> for Builder<'a, 'll, 'tcx> {
         llvm::Attribute::NoInline.apply_callsite(llvm::AttributePlace::Function, llret);
     }
 
-    fn add_string_metadata(&mut self, llret: &'ll Value, metadata: &CStr) {
+    fn add_string_metadata_function(llfn: &'ll Value, metadata: &CStr) {
+        unsafe {
+            llvm::LLVMRustAddStringMetadataFunction(llfn, metadata.as_ptr())
+        }
+    }
+
+    fn add_string_metadata(llret: &'ll Value, metadata: &CStr) {
         unsafe {
             llvm::LLVMRustAddStringMetadata(llret, metadata.as_ptr())
         }
