@@ -1421,15 +1421,15 @@ impl BuilderMethods<'a, 'tcx> for Builder<'a, 'll, 'tcx> {
         llvm::Attribute::NoInline.apply_callsite(llvm::AttributePlace::Function, llret);
     }
 
-    fn add_string_metadata_function(llfn: &'ll Value, metadata: &CStr) {
+    fn add_string_metadata_function(llfn: &'ll Value, name: &CStr, metadata: &CStr) {
         unsafe {
-            llvm::LLVMRustAddStringMetadataFunction(llfn, metadata.as_ptr())
+            llvm::LLVMRustAddStringMetadataFunction(llfn, name.as_ptr(), metadata.as_ptr())
         }
     }
 
-    fn add_string_metadata(llret: &'ll Value, metadata: &CStr) {
+    fn add_string_metadata(llret: &'ll Value, name: &CStr, metadata: &CStr) {
         unsafe {
-            llvm::LLVMRustAddStringMetadata(llret, metadata.as_ptr())
+            llvm::LLVMRustAddStringMetadata(llret, name.as_ptr(), metadata.as_ptr())
         }
     }
 }

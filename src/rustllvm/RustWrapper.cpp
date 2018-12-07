@@ -76,19 +76,19 @@ static void FatalErrorHandler(void *UserData,
   exit(101);
 }
 
-extern "C" void LLVMRustAddStringMetadata(LLVMValueRef Instr, const char* Metadata) {
+extern "C" void LLVMRustAddStringMetadata(LLVMValueRef Instr, const char* MetadataName, const char* Metadata) {
   Instruction* I = unwrap<Instruction>(Instr);
   MDNode* N = MDNode::get(I->getContext(), MDString::get(I->getContext(), Metadata));
 
-  I->setMetadata("rust", N);
+  I->setMetadata(MetadataName, N);
 }
 
-extern "C" void LLVMRustAddStringMetadataFunction(LLVMValueRef Fn, const char* Metadata) {
+extern "C" void LLVMRustAddStringMetadataFunction(LLVMValueRef Fn, const char* MetadataName, const char* Metadata) {
   //Instruction* I = unwrap<Instruction>(Instr);
   Function *A = unwrap<Function>(Fn);
   MDNode* N = MDNode::get(A->getContext(), MDString::get(A->getContext(), Metadata));
 
-  A->setMetadata("rust", N);
+  A->setMetadata(MetadataName, N);
 }
 
 extern "C" void LLVMRustInstallFatalErrorHandler() {

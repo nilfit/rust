@@ -164,12 +164,13 @@ impl<'a, 'tcx: 'a, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
                 }
                 if let Some(meta_name) = meta_name {
                     let cname = CString::new(meta_name).unwrap();
-                    Bx::add_string_metadata(llret, &cname);
+                    let cmeta = CString::new("rust_name").unwrap();
+                    Bx::add_string_metadata(llret, &cmeta, &cname);
                 }
                 if let Some(s) = meta_sig {
-                    // TODO Don't overwrite the "meta_name" metadata
                     let cs = CString::new(s).unwrap();
-                    Bx::add_string_metadata(llret, &cs);
+                    let cmeta = CString::new("rust_sig").unwrap();
+                    Bx::add_string_metadata(llret, &cmeta, &cs);
                 }
 
                 if let Some((ret_dest, target)) = destination {
@@ -457,7 +458,7 @@ impl<'a, 'tcx: 'a, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
                 from_hir_call: _
             } => {
                 debug!("TerminatorKind::Call - {:?}", terminator.kind);
-                let meta_funcname = format!("func:{:?}", func);
+                let meta_funcname = format!("{:?}", func);
                 // Create the callee. This is a fn ptr or zero-sized and hence a kind of scalar.
                 let callee = self.codegen_operand(&mut bx, func);
 
@@ -482,7 +483,7 @@ impl<'a, 'tcx: 'a, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
                 );
                 let abi = sig.abi;
 
-                let meta_sig = format!("sig:{}", sig);
+                let meta_sig = format!("{}", sig);
 
                 // Handle intrinsics old codegen wants Expr's for, ourselves.
                 let intrinsic = match def {

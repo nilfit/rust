@@ -800,8 +800,8 @@ extern "C" {
     pub fn LLVMRustAddDereferenceableOrNullCallSiteAttr(Instr: &Value,
                                                         index: c_uint,
                                                         bytes: u64);
-    pub fn LLVMRustAddStringMetadata(Instr: &Value, Metadata: *const c_char);
-    pub fn LLVMRustAddStringMetadataFunction(Fun: &Value, Metadata: *const c_char);
+    pub fn LLVMRustAddStringMetadata(Instr: &Value, MetadataName: *const c_char, Metadata: *const c_char);
+    pub fn LLVMRustAddStringMetadataFunction(Fun: &Value, MetadataName: *const c_char, Metadata: *const c_char);
 
     // Operations on load/store instructions (only)
     pub fn LLVMSetVolatile(MemoryAccessInst: &Value, volatile: Bool);
