@@ -1331,8 +1331,9 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         self.cstore.crate_data_as_rc_any(cnum)
     }
 
+    #[inline(always)]
     pub fn create_stable_hashing_context(self) -> StableHashingContext<'a> {
-        let krate = self.dep_graph.with_ignore(|| self.gcx.hir.krate());
+        let krate = self.gcx.hir.forest.untracked_krate();
 
         StableHashingContext::new(self.sess,
                                   krate,
@@ -1349,7 +1350,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         // We cannot use the query versions of crates() and crate_hash(), since
         // those would need the DepNodes that we are allocating here.
         for cnum in self.cstore.crates_untracked() {
-            let dep_node = DepNode::new(self, DepConstructor::CrateMetadata(cnum));
+            let dep_node = DepNode::new_inlined(self, DepConstructor::CrateMetadata(cnum));
             let crate_hash = self.cstore.crate_hash_untracked(cnum);
             self.dep_graph.with_task(dep_node,
                                      self,
@@ -1605,6 +1606,13 @@ impl<'a, 'tcx> TyCtxt<'a, 'tcx, 'tcx> {
 }
 
 impl<'gcx: 'tcx, 'tcx> GlobalCtxt<'gcx> {
+    pub fn tcx(&self) -> TyCtxt<'_, 'gcx, 'gcx> {
+        TyCtxt {
+            gcx: self,
+            interners: &self.global_interners,
+        }
+    }
+
     /// Call the closure with a local `TyCtxt` using the given arena.
     pub fn enter_local<F, R>(
         &self,
@@ -1615,20 +1623,9 @@ impl<'gcx: 'tcx, 'tcx> GlobalCtxt<'gcx> {
         F: for<'a> FnOnce(TyCtxt<'a, 'gcx, 'tcx>) -> R
     {
         let interners = CtxtInterners::new(arena);
-        let tcx = TyCtxt {
+        f(TyCtxt {
             gcx: self,
             interners: &interners,
-        };
-        ty::tls::with_related_context(tcx.global_tcx(), |icx| {
-            let new_icx = ty::tls::ImplicitCtxt {
-                tcx,
-                query: icx.query.clone(),
-                layout_depth: icx.layout_depth,
-                task: icx.task,
-            };
-            ty::tls::enter_context(&new_icx, |new_icx| {
-                f(new_icx.tcx)
-            })
         })
     }
 }
@@ -1871,7 +1868,7 @@ pub mod tls {
     use ty::query;
     use errors::{Diagnostic, TRACK_DIAGNOSTICS};
     use rustc_data_structures::OnDrop;
-    use rustc_data_structures::sync::{self, Lrc, Lock};
+    use rustc_data_structures::sync::{self, Lock, LrcRef};
     use dep_graph::OpenTask;
 
     #[cfg(not(parallel_queries))]
@@ -1886,14 +1883,18 @@ pub mod tls {
     /// you should also have access to an ImplicitCtxt through the functions
     /// in this module.
     #[derive(Clone)]
-    pub struct ImplicitCtxt<'a, 'gcx: 'a+'tcx, 'tcx: 'a> {
+    pub struct ImplicitCtxt<'a, 'gcx> {
         /// The current TyCtxt. Initially created by `enter_global` and updated
         /// by `enter_local` with a new local interner
-        pub tcx: TyCtxt<'a, 'gcx, 'tcx>,
+        pub gcx: &'a GlobalCtxt<'gcx>,
 
         /// The current query job, if any. This is updated by start_job in
         /// ty::query::plumbing when executing a query
-        pub query: Option<Lrc<query::QueryJob<'gcx>>>,
+        pub query: Option<LrcRef<'a, query::QueryJob<'gcx>>>,
+
+        /// Where to store diagnostics for the current query job, if any.
+        /// This is updated by start_job in ty::query::plumbing when executing a query
+        pub diagnostics: Option<&'a Lock<Option<Box<Vec<Diagnostic>>>>>,
 
         /// Used to prevent layout from recursing too deeply.
         pub layout_depth: usize,
@@ -1907,6 +1908,7 @@ pub mod tls {
     /// to `value` during the call to `f`. It is restored to its previous value after.
     /// This is used to set the pointer to the new ImplicitCtxt.
     #[cfg(parallel_queries)]
+    #[inline]
     fn set_tlv<F: FnOnce() -> R, R>(value: usize, f: F) -> R {
         rayon_core::tlv::with(value, f)
     }
@@ -1914,29 +1916,41 @@ pub mod tls {
     /// Gets Rayon's thread local variable which is preserved for Rayon jobs.
     /// This is used to get the pointer to the current ImplicitCtxt.
     #[cfg(parallel_queries)]
+    #[inline]
     fn get_tlv() -> usize {
         rayon_core::tlv::get()
     }
 
     /// A thread local variable which stores a pointer to the current ImplicitCtxt
     #[cfg(not(parallel_queries))]
-    thread_local!(static TLV: Cell<usize> = Cell::new(0));
+    // Accessing `thread_local` in another crate is bugged, so we have
+    // two accessors `set_raw_tlv` and `get_tlv` which do not have an
+    // inline attribute to prevent that
+    #[thread_local]
+    static TLV: Cell<usize> = Cell::new(0);
+
+    /// This is used to set the pointer to the current ImplicitCtxt.
+    #[cfg(not(parallel_queries))]
+    fn set_raw_tlv(value: usize) {
+        TLV.set(value)
+    }
 
     /// Sets TLV to `value` during the call to `f`.
     /// It is restored to its previous value after.
     /// This is used to set the pointer to the new ImplicitCtxt.
     #[cfg(not(parallel_queries))]
+    #[inline]
     fn set_tlv<F: FnOnce() -> R, R>(value: usize, f: F) -> R {
         let old = get_tlv();
-        let _reset = OnDrop(move || TLV.with(|tlv| tlv.set(old)));
-        TLV.with(|tlv| tlv.set(value));
+        let _reset = OnDrop(move || set_raw_tlv(old));
+        set_raw_tlv(value);
         f()
     }
 
     /// This is used to get the pointer to the current ImplicitCtxt.
     #[cfg(not(parallel_queries))]
     fn get_tlv() -> usize {
-        TLV.with(|tlv| tlv.get())
+        TLV.get()
     }
 
     /// This is a callback from libsyntax as it cannot access the implicit state
@@ -1953,8 +1967,12 @@ pub mod tls {
     fn track_diagnostic(diagnostic: &Diagnostic) {
         with_context_opt(|icx| {
             if let Some(icx) = icx {
-                if let Some(ref query) = icx.query {
-                    query.diagnostics.lock().push(diagnostic.clone());
+                if let Some(ref diagnostics) = icx.diagnostics {
+                    let mut diagnostics = diagnostics.lock();
+                    if diagnostics.is_none() {
+                        *diagnostics = Some(Box::new(Vec::new()));
+                    }
+                    diagnostics.as_mut().unwrap().push(diagnostic.clone());
                 }
             }
         })
@@ -1986,9 +2004,10 @@ pub mod tls {
     }
 
     /// Sets `context` as the new current ImplicitCtxt for the duration of the function `f`
-    pub fn enter_context<'a, 'gcx: 'tcx, 'tcx, F, R>(context: &ImplicitCtxt<'a, 'gcx, 'tcx>,
+    #[inline]
+    pub fn enter_context<'a, 'gcx, F, R>(context: &ImplicitCtxt<'a, 'gcx>,
                                                      f: F) -> R
-        where F: FnOnce(&ImplicitCtxt<'a, 'gcx, 'tcx>) -> R
+        where F: FnOnce(&ImplicitCtxt<'a, 'gcx>) -> R
     {
         set_tlv(context as *const _ as usize, || {
             f(&context)
@@ -2017,8 +2036,9 @@ pub mod tls {
                 interners: &gcx.global_interners,
             };
             let icx = ImplicitCtxt {
-                tcx,
+                gcx,
                 query: None,
+                diagnostics: None,
                 layout_depth: 0,
                 task: &OpenTask::Ignore,
             };
@@ -2047,7 +2067,8 @@ pub mod tls {
         };
         let icx = ImplicitCtxt {
             query: None,
-            tcx,
+            diagnostics: None,
+            gcx,
             layout_depth: 0,
             task: &OpenTask::Ignore,
         };
@@ -2055,8 +2076,9 @@ pub mod tls {
     }
 
     /// Allows access to the current ImplicitCtxt in a closure if one is available
+    #[inline]
     pub fn with_context_opt<F, R>(f: F) -> R
-        where F: for<'a, 'gcx, 'tcx> FnOnce(Option<&ImplicitCtxt<'a, 'gcx, 'tcx>>) -> R
+        where F: for<'a, 'gcx> FnOnce(Option<&ImplicitCtxt<'a, 'gcx>>) -> R
     {
         let context = get_tlv();
         if context == 0 {
@@ -2064,16 +2086,17 @@ pub mod tls {
         } else {
             // We could get a ImplicitCtxt pointer from another thread.
             // Ensure that ImplicitCtxt is Sync
-            sync::assert_sync::<ImplicitCtxt<'_, '_, '_>>();
+            sync::assert_sync::<ImplicitCtxt<'_, '_>>();
 
-            unsafe { f(Some(&*(context as *const ImplicitCtxt<'_, '_, '_>))) }
+            unsafe { f(Some(&*(context as *const ImplicitCtxt<'_, '_>))) }
         }
     }
 
     /// Allows access to the current ImplicitCtxt.
     /// Panics if there is no ImplicitCtxt available
+    #[inline]
     pub fn with_context<F, R>(f: F) -> R
-        where F: for<'a, 'gcx, 'tcx> FnOnce(&ImplicitCtxt<'a, 'gcx, 'tcx>) -> R
+        where F: for<'a, 'gcx> FnOnce(&ImplicitCtxt<'a, 'gcx>) -> R
     {
         with_context_opt(|opt_context| f(opt_context.expect("no ImplicitCtxt stored in tls")))
     }
@@ -2083,34 +2106,15 @@ pub mod tls {
     /// with the same 'gcx lifetime as the TyCtxt passed in.
     /// This will panic if you pass it a TyCtxt which has a different global interner from
     /// the current ImplicitCtxt's tcx field.
-    pub fn with_related_context<'a, 'gcx, 'tcx1, F, R>(tcx: TyCtxt<'a, 'gcx, 'tcx1>, f: F) -> R
-        where F: for<'b, 'tcx2> FnOnce(&ImplicitCtxt<'b, 'gcx, 'tcx2>) -> R
+    #[inline]
+    pub fn with_related_context<'a, 'gcx, 'tcx, F, R>(tcx: TyCtxt<'a, 'gcx, 'tcx>, f: F) -> R
+        where F: for<'b> FnOnce(&ImplicitCtxt<'b, 'gcx>) -> R
     {
         with_context(|context| {
             unsafe {
                 let gcx = tcx.gcx as *const _ as usize;
-                assert!(context.tcx.gcx as *const _ as usize == gcx);
-                let context: &ImplicitCtxt<'_, '_, '_> = mem::transmute(context);
-                f(context)
-            }
-        })
-    }
-
-    /// Allows access to the current ImplicitCtxt whose tcx field has the same global
-    /// interner and local interner as the tcx argument passed in. This means the closure
-    /// is given an ImplicitCtxt with the same 'tcx and 'gcx lifetimes as the TyCtxt passed in.
-    /// This will panic if you pass it a TyCtxt which has a different global interner or
-    /// a different local interner from the current ImplicitCtxt's tcx field.
-    pub fn with_fully_related_context<'a, 'gcx, 'tcx, F, R>(tcx: TyCtxt<'a, 'gcx, 'tcx>, f: F) -> R
-        where F: for<'b> FnOnce(&ImplicitCtxt<'b, 'gcx, 'tcx>) -> R
-    {
-        with_context(|context| {
-            unsafe {
-                let gcx = tcx.gcx as *const _ as usize;
-                let interners = tcx.interners as *const _ as usize;
-                assert!(context.tcx.gcx as *const _ as usize == gcx);
-                assert!(context.tcx.interners as *const _ as usize == interners);
-                let context: &ImplicitCtxt<'_, '_, '_> = mem::transmute(context);
+                assert!(context.gcx as *const _ as usize == gcx);
+                let context: &ImplicitCtxt<'_, '_> = mem::transmute(context);
                 f(context)
             }
         })
@@ -2118,18 +2122,20 @@ pub mod tls {
 
     /// Allows access to the TyCtxt in the current ImplicitCtxt.
     /// Panics if there is no ImplicitCtxt available
+    #[inline]
     pub fn with<F, R>(f: F) -> R
-        where F: for<'a, 'gcx, 'tcx> FnOnce(TyCtxt<'a, 'gcx, 'tcx>) -> R
+        where F: for<'a, 'gcx> FnOnce(TyCtxt<'a, 'gcx, 'gcx>) -> R
     {
-        with_context(|context| f(context.tcx))
+        with_context(|context| f(context.gcx.tcx()))
     }
 
     /// Allows access to the TyCtxt in the current ImplicitCtxt.
     /// The closure is passed None if there is no ImplicitCtxt available
+    #[inline]
     pub fn with_opt<F, R>(f: F) -> R
-        where F: for<'a, 'gcx, 'tcx> FnOnce(Option<TyCtxt<'a, 'gcx, 'tcx>>) -> R
+        where F: for<'a, 'gcx> FnOnce(Option<TyCtxt<'a, 'gcx, 'gcx>>) -> R
     {
-        with_context_opt(|opt_context| f(opt_context.map(|context| context.tcx)))
+        with_context_opt(|opt_context| f(opt_context.map(|context| context.gcx.tcx())))
     }
 }
 
