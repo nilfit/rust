@@ -296,7 +296,7 @@ impl<'a, 'tcx, Q: QueryDescription<'tcx>> JobOwner<'a, 'tcx, Q> {
     {
         // Update the ImplicitCtxt to point to our new query job
         let new_icx = tls::ImplicitCtxt {
-            tcx,
+            gcx: &*tcx,
             query: Some(LrcRef::new(&self.job)),
             diagnostics,
             layout_depth: self.layout_depth,
@@ -405,14 +405,14 @@ impl<'a, 'gcx> TyCtxt<'a, 'gcx, 'gcx> {
                 let mut i = 0;
 
                 while let Some(query) = current_query {
-                    let mut db = DiagnosticBuilder::new(icx.tcx.sess.diagnostic(),
+                    let mut db = DiagnosticBuilder::new(icx.gcx.sess.diagnostic(),
                         Level::FailureNote,
                         &format!("#{} [{}] {}",
                                  i,
                                  query.info.query.name(),
-                                 query.info.query.describe(icx.tcx)));
-                    db.set_span(icx.tcx.sess.source_map().def_span(query.info.span));
-                    icx.tcx.sess.diagnostic().force_print_db(db);
+                                 query.info.query.describe(icx.gcx.tcx())));
+                    db.set_span(icx.gcx.sess.source_map().def_span(query.info.span));
+                    icx.gcx.sess.diagnostic().force_print_db(db);
 
                     current_query = query.parent.clone();
                     i += 1;
